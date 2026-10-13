@@ -1,0 +1,39 @@
+name: Build experimental C54D logihub for Windows
+
+on:
+  push:
+    branches:
+      - feature/c54d-superlight2-receiver
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build standalone CLI
+        shell: pwsh
+        run: cargo build --locked --release --bin logihub
+      - name: Test helper
+        shell: pwsh
+        run: |
+          cargo test --locked
+          & .\target\release\logihub.exe --help | Out-Host
+      - name: SHA256 checksum
+        shell: pwsh
+        run: |
+          Get-FileHash .\target\release\logihub.exe -Algorithm SHA256 | Format-List
+          (Get-FileHash .\target\release\logihub.exe -Algorithm SHA256).Hash.ToLowerInvariant() | Set-Content -Encoding ascii .\target\release\logihub.exe.sha256
+      - name: Upload isolated test executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: logihub-c54d-test-windows-x64
+          path: |
+            target/release/logihub.exe
+            target/release/logihub.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
