@@ -101,7 +101,12 @@ impl Device {
     pub fn set_dpi(&self, dpi: u16) -> Result<(), HidppError> {
         let [high, low] = dpi_to_be(dpi);
         if let Some(feature) = self.get_feature(FEATURE_EXTENDED_ADJUSTABLE_DPI)? {
-            self.call(feature, 6, &[0, high, low, high, low])?;
+            // 0x2202 fn 6 requires sensor, X DPI, Y DPI, and LOD.
+            // Preserve independent Y and lift-off distance from fn 5.
+            // If Y is linked (zero), leave it linked instead of forcing X onto Y.
+            let current = self.call(feature, 5, &[0])?;
+            let args = [0, high, low, current[5], current[6], current[9]];
+            self.call(feature, 6, &args)?;
             return Ok(());
         }
         let feature = self.require_feature(FEATURE_ADJUSTABLE_DPI)?;
