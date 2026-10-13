@@ -469,6 +469,13 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_superlight_2_c54d_as_receiver() {
+        assert!(is_receiver_pid(0xC54D));
+        assert!(is_receiver_pid(0xC548)); // keep upstream receiver support
+        assert!(!is_receiver_pid(0xC09B)); // actual mouse is not a receiver
+    }
+
+    #[test]
     fn falls_back_to_vid_pid_for_unknown_path_format() {
         let path = CString::new("unexpected-device-path").unwrap();
         assert_eq!(
