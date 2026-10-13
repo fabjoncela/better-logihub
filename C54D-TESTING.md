@@ -29,3 +29,14 @@ The output should show `type: wireless device`, `model_id: pro_x_2_wireless_mous
 Replace `<INDEX>` with the actual number from the list; do **not** copy angle brackets. Report both command outputs to validate support before integrating the new binary into CafeLauncher.
 
 The build artifact is a temporary test build, not an official upstream release. The original MIT license remains in the fork.
+
+## Extended DPI debug output (read-only)
+
+Use the newest successful Windows workflow artifact. Run:
+
+```powershell
+.\logihub.exe --json list
+.\logihub.exe dpi diagnose --device 1 --target 1800
+```
+
+Confirm the mouse is still at index 1 first. `dpi diagnose` performs only feature discovery and **read** calls. It reports whether HID++ feature 0x2202 or 0x2201 exists, their feature indices, the first 10 bytes of sensor 0's getter reply, and the *prospective* extended setter payload. It explicitly does **not** transmit that payload. Send the full diagnostic output for further investigation, and do not repeatedly retry `dpi set` while the firmware rejects it.
