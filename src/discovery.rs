@@ -442,6 +442,7 @@ fn is_receiver_pid(product_id: u16) -> bool {
             | 0xC545
             | 0xC547
             | 0xC548
+            | 0xC54D // LIGHTSPEED receiver used by PRO X SUPERLIGHT 2
     )
 }
 
