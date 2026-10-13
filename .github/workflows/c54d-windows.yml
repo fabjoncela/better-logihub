@@ -23,6 +23,8 @@ jobs:
         run: |
           cargo test --locked
           & .\target\release\logihub.exe --help | Out-Host
+          & .\target\release\logihub.exe dpi diagnose --help | Out-Host
+          & .\target\release\logihub.exe onboard mode --help | Out-Host
       - name: SHA256 checksum
         shell: pwsh
         run: |

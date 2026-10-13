@@ -2,7 +2,7 @@
 
 This branch adds Logitech USB VID **046D**, PID **C54D** to better-logihub's HID++ receiver discovery list. The receiver was observed with a **PRO X SUPERLIGHT 2**, previously showing as `direct device / USB Receiver / unreachable: HID++ 1.0 error 1 (invalid sub-id)`.
 
-**Important:** Recognizing a receiver PID is only the first step. This has not yet been verified against real C54D hardware. Do not overwrite the original helper or enable onboard profile writes based on this change alone.
+**Important:** C54D discovery and read-only DPI diagnostics have now been verified on the local Superlight 2. Live DPI setting in host mode has **not** been verified. Do not overwrite CafeLauncher's helper or enable onboard profile writes based on this change alone.
 
 ## Download the test executable
 
@@ -16,7 +16,9 @@ This branch adds Logitech USB VID **046D**, PID **C54D** to better-logihub's HID
 With the Superlight 2 turned on and G HUB closed, run in PowerShell from the extracted directory:
 
 ```powershell
-Get-FileHash .\logihub.exe -Algorithm SHA256
+$expected = (Get-Content .\logihub.exe.sha256 -Raw).Trim()
+$actual = (Get-FileHash .\logihub.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw "SHA-256 mismatch" }
 .\logihub.exe --json list
 ```
 
@@ -36,7 +38,32 @@ Use the newest successful Windows workflow artifact. Run:
 
 ```powershell
 .\logihub.exe --json list
-.\logihub.exe dpi diagnose --device 1 --target 1800
+.\logihub.exe dpi get --device 1
+.\logihub.exe onboard mode get --device 1
+.\logihub.exe dpi diagnose --device 1 --target 1800 --verbose
 ```
 
-Confirm the mouse is still at index 1 first. `dpi diagnose` performs only feature discovery and **read** calls. It reports whether HID++ feature 0x2202 or 0x2201 exists, their feature indices, the first 10 bytes of sensor 0's getter reply, and the *prospective* extended setter payload. It explicitly does **not** transmit that payload. Send the full diagnostic output for further investigation, and do not repeatedly retry `dpi set` while the firmware rejects it.
+Confirm the mouse is still at index 1 first. `dpi diagnose` performs only feature discovery and **read** calls. Verbose output shows firmware version (without unit ID or serial), 0x8100 mode, 0x2202 sensor axes and DPI ranges, raw request templates and response parameters, and the *prospective* setter payload. It does **not** transmit that payload. Do not repeatedly retry `dpi set` while the firmware rejects it.
+
+## Current finding (13 October 2026)
+
+On the local PRO X 2, firmware `MPM32.05` build `0029`, the read-only mode query returned **onboard mode** (`0x01`). The 0x2202 sensor lists both X and Y axes, LOD, and 1800 DPI is inside the advertised `1010-2000 step 10` range. The existing function-6 payload `00 07 08 07 08 02` matches the layout in [libratbag's Superlight 2 implementation](https://github.com/libratbag/libratbag/pull/1896) and [Solaar's extended DPI setting](https://github.com/pwr-Solaar/Solaar/blob/master/lib/logitech_receiver/settings_templates.py). The old error message was wrong: HID++ 2.0 code `5` means **Logitech internal error**, per the [HID++ specification](https://lekensteyn.nl/files/logitech/logitech_hidpp_2.0_specification_draft_2012-06-04.pdf), rather than invalid argument.
+
+**High confidence:** receiver addressing, feature index, getter offsets, axis payload, and requested DPI range are correct. **Moderate confidence:** onboard mode causes the rejected live setter; [Solaar notes that onboard profiles may need to be disabled](https://github.com/pwr-Solaar/Solaar/blob/master/lib/logitech_receiver/settings_templates.py), while [libratbag routes devices with onboard profiles through profile handling](https://github.com/libratbag/libratbag/pull/1896). The exact cause of this firmware's internal error remains unproven until an approved host-mode write test. The CLI now stops `dpi set` for this model while onboard mode is active, without changing mode or DPI.
+
+## Approval-gated host-mode test
+
+**Do not run this sequence until the owner approves a mode switch and one DPI write.** Host mode can change button behavior while G HUB is closed. Keep a second pointing device available. These commands do not write onboard profile memory, and the final command restores the previous mode:
+
+```powershell
+.\logihub.exe onboard mode get --device 1
+.\logihub.exe dpi get --device 1
+.\logihub.exe onboard mode host --device 1
+.\logihub.exe onboard mode get --device 1
+.\logihub.exe dpi set 1800 --device 1
+.\logihub.exe dpi get --device 1
+.\logihub.exe onboard mode onboard --device 1
+.\logihub.exe onboard mode get --device 1
+```
+
+If the live setter still returns code `5` in host mode, record the error and restore onboard mode. The host-mode path is a separate experiment from onboard-memory editing.

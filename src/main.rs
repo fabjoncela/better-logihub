@@ -411,6 +411,11 @@ enum DpiCommand {
         device: Option<usize>,
         #[arg(long, default_value_t = 1800)]
         target: u16,
+        #[arg(
+            long,
+            help = "Include read-only HID++ requests, responses, and device capabilities"
+        )]
+        verbose: bool,
     },
     Get {
         #[arg(long)]
@@ -910,7 +915,11 @@ fn main() -> Result<()> {
         Command::Dpi { command } => {
             let discovery = discover_with_warnings()?;
             match command {
-                DpiCommand::Diagnose { device, target } => dpi_diagnose(&discovery, device, target),
+                DpiCommand::Diagnose {
+                    device,
+                    target,
+                    verbose,
+                } => dpi_diagnose(&discovery, device, target, verbose),
                 DpiCommand::Get { device } => dpi_get(&discovery, device, cli.json),
                 DpiCommand::Set { value, device } => dpi_set(&discovery, device, value, cli.json),
             }
@@ -1510,10 +1519,15 @@ fn battery(discovery: &Discovery, index: Option<usize>, json: bool) -> Result<()
     Ok(())
 }
 
-fn dpi_diagnose(discovery: &Discovery, index: Option<usize>, target_dpi: u16) -> Result<()> {
+fn dpi_diagnose(
+    discovery: &Discovery,
+    index: Option<usize>,
+    target_dpi: u16,
+    verbose: bool,
+) -> Result<()> {
     let target = single_device(discovery, index)?;
     println!("DPI diagnostics: device {} ({})", target.index, target.name);
-    for line in target.device.dpi_diagnostics(target_dpi) {
+    for line in target.device.dpi_diagnostics(target_dpi, verbose) {
         println!("{line}");
     }
     println!("Read-only diagnosis finished. No setter or onboard-memory command sent.");
@@ -1544,6 +1558,17 @@ fn dpi_get(discovery: &Discovery, index: Option<usize>, json: bool) -> Result<()
 
 fn dpi_set(discovery: &Discovery, index: Option<usize>, value: u16, json: bool) -> Result<()> {
     let target = single_device(discovery, index)?;
+    if target
+        .model
+        .is_some_and(|model| model.model_id == "pro_x_2_wireless_mouse")
+    {
+        let mode = Onboard::new(&target.device)?.mode()?;
+        ensure!(
+            mode == 2,
+            "PRO X SUPERLIGHT 2 is not in host mode (mode 0x{mode:02X}); the live DPI write was not sent. Run 'logihub onboard mode get --device {}' to confirm.",
+            target.index
+        );
+    }
     target.device.set_dpi(value).map_err(anyhow::Error::new)?;
     let result = SetResult {
         device: target.index,
