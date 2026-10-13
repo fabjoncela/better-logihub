@@ -1,0 +1,74 @@
+name: Publish verified C54D Windows helper
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/publish-tested-c54d.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify the source build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/38429635285" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw "Could not retrieve the original build metadata." }
+          if ($run.head_sha -ne 'b6a072b44496e7053b937840a3c8d611f3c2ca91' -or $run.conclusion -ne 'success') {
+            throw "Refusing to publish: source run SHA or build result did not match the hardware-tested commit."
+          }
+
+      - name: Download exact tested executable
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 38429635285 --repo "$env:GITHUB_REPOSITORY" --name logihub-c54d-test-windows-x64 --dir release-assets
+          if ($LASTEXITCODE -ne 0) { throw "Downloading the verified build artifact failed." }
+
+      - name: Verify executable SHA-256
+        shell: pwsh
+        run: |
+          $exe = 'release-assets/logihub.exe'
+          $checksum = 'release-assets/logihub.exe.sha256'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf) -or -not (Test-Path -LiteralPath $checksum -PathType Leaf)) {
+            throw "Artifact does not contain logihub.exe and logihub.exe.sha256."
+          }
+          $expected = (Get-Content -LiteralPath $checksum -Raw).Trim().ToLowerInvariant()
+          if ($expected -notmatch '^[a-f0-9]{64}$') { throw "Malformed source checksum." }
+          $actual = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "SHA-256 mismatch: the release binary is not the tested artifact." }
+          Write-Host "Verified SHA-256: $actual"
+
+      - name: Create public GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v0.1.0-c54d.1'
+          gh release view $tag --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; not overwriting its assets."
+            exit 0
+          }
+          $notes = @'
+          C54D Logitech LIGHTSPEED receiver support and live DPI updates for PRO X SUPERLIGHT 2.
+
+          Tested on hardware: receiver recognition; automatically switch onboard -> host for DPI 800; live DPI 2400 and 300; verify read-back; and reapply after receiver reconnection. Windows CI passed on commit b6a072b44496e7053b937840a3c8d611f3c2ca91.
+
+          This Windows logihub.exe is the exact artifact from the successful build of b6a072b. It does not rewrite onboard profile memory. G HUB may reapply its own profile, so launchers should apply preferred DPI after G HUB initialization.
+
+          The release includes logihub.exe.sha256 to verify the executable.
+          '@
+          gh release create $tag 'release-assets/logihub.exe' 'release-assets/logihub.exe.sha256' --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title 'better-logihub C54D Superlight 2 Windows v0.1.0-c54d.1' --notes $notes
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed." }
