@@ -1558,23 +1558,32 @@ fn dpi_get(discovery: &Discovery, index: Option<usize>, json: bool) -> Result<()
 
 fn dpi_set(discovery: &Discovery, index: Option<usize>, value: u16, json: bool) -> Result<()> {
     let target = single_device(discovery, index)?;
-    if target
+    let superlight_2 = target
         .model
-        .is_some_and(|model| model.model_id == "pro_x_2_wireless_mouse")
-    {
-        let mode = Onboard::new(&target.device)?.mode()?;
-        ensure!(
-            mode == 2,
-            "PRO X SUPERLIGHT 2 is not in host mode (mode 0x{mode:02X}); the live DPI write was not sent. Run 'logihub onboard mode get --device {}' to confirm.",
-            target.index
-        );
-    }
-    target.device.set_dpi(value).map_err(anyhow::Error::new)?;
+        .is_some_and(|model| model.model_id == "pro_x_2_wireless_mouse");
+    let switched_to_host = if superlight_2 {
+        let onboard = Onboard::new(&target.device)?;
+        set_superlight2_dpi(
+            value,
+            || onboard.mode(),
+            |mode| onboard.set_mode(mode),
+            |dpi| target.device.set_dpi(dpi).map_err(anyhow::Error::new),
+            || target.device.dpi().map_err(anyhow::Error::new),
+        )?
+    } else {
+        target.device.set_dpi(value).map_err(anyhow::Error::new)?;
+        false
+    };
     let result = SetResult {
         device: target.index,
         name: target.name.clone(),
         value,
-        status: "set".into(),
+        status: if switched_to_host {
+            "set; host mode"
+        } else {
+            "set"
+        }
+        .into(),
     };
     if json {
         print_json(&result)
@@ -1590,6 +1599,50 @@ fn dpi_set(discovery: &Discovery, index: Option<usize>, value: u16, json: bool) 
         );
         Ok(())
     }
+}
+
+fn set_superlight2_dpi<M, S, W, R>(
+    dpi: u16,
+    mut read_mode: M,
+    mut set_mode: S,
+    mut write_dpi: W,
+    mut read_dpi: R,
+) -> Result<bool>
+where
+    M: FnMut() -> Result<u8>,
+    S: FnMut(u8) -> Result<()>,
+    W: FnMut(u16) -> Result<()>,
+    R: FnMut() -> Result<u16>,
+{
+    let switched_to_host = match read_mode()? {
+        1 => {
+            if let Err(error) = set_mode(2) {
+                if let Err(restore) = set_mode(1) {
+                    bail!("{error:#}; restoring onboard mode also failed: {restore:#}");
+                }
+                return Err(error);
+            }
+            true
+        }
+        2 => false,
+        mode => bail!("PRO X SUPERLIGHT 2 has unknown onboard mode 0x{mode:02X}"),
+    };
+    let result = (|| -> Result<()> {
+        write_dpi(dpi)?;
+        let observed = read_dpi()?;
+        ensure!(
+            observed == dpi,
+            "DPI read-back was {observed}, expected {dpi}"
+        );
+        Ok(())
+    })();
+    if let Err(error) = result {
+        if switched_to_host && let Err(restore) = set_mode(1) {
+            bail!("{error:#}; restoring onboard mode also failed: {restore:#}");
+        }
+        return Err(error);
+    }
+    Ok(switched_to_host)
 }
 
 fn rate_get(discovery: &Discovery, index: Option<usize>, json: bool) -> Result<()> {
@@ -3815,8 +3868,13 @@ fn onboard_mode_set(onboard_mode: bool, index: Option<usize>, json: bool) -> Res
     let discovery = discover_with_warnings()?;
     let target = single_device(&discovery, index)?;
     let onboard = Onboard::new(&target.device)?;
-    let description = onboard.description()?;
-    require_backup(&description)?;
+    let superlight_2 = target
+        .model
+        .is_some_and(|model| model.model_id == "pro_x_2_wireless_mouse");
+    if !(superlight_2 && matches!(onboard.profile_format_id()?, 0x06 | 0x07)) {
+        let description = onboard.description()?;
+        require_backup(&description)?;
+    }
     let mode = if onboard_mode { 0x01 } else { 0x02 };
     onboard.set_mode(mode)?;
     print_onboard_result(
@@ -3959,5 +4017,85 @@ fn single_device(discovery: &Discovery, index: Option<usize>) -> Result<&Managed
             "{} devices were found; select one with --device <index>",
             devices.len()
         ),
+    }
+}
+
+#[cfg(test)]
+mod dpi_mode_tests {
+    use std::cell::Cell;
+
+    use super::set_superlight2_dpi;
+
+    #[test]
+    fn successful_live_write_keeps_host_mode() {
+        let mode = Cell::new(1);
+        let dpi = Cell::new(800);
+        let switched = set_superlight2_dpi(
+            1800,
+            || Ok(mode.get()),
+            |value| {
+                mode.set(value);
+                Ok(())
+            },
+            |value| {
+                dpi.set(value);
+                Ok(())
+            },
+            || Ok(dpi.get()),
+        )
+        .unwrap();
+        assert!(switched);
+        assert_eq!(mode.get(), 2);
+        assert_eq!(dpi.get(), 1800);
+    }
+
+    #[test]
+    fn failed_or_unverified_write_restores_onboard_mode() {
+        for reject_write in [true, false] {
+            let mode = Cell::new(1);
+            let result = set_superlight2_dpi(
+                1800,
+                || Ok(mode.get()),
+                |value| {
+                    mode.set(value);
+                    Ok(())
+                },
+                |_| {
+                    if reject_write {
+                        anyhow::bail!("write rejected")
+                    } else {
+                        Ok(())
+                    }
+                },
+                || Ok(800),
+            );
+            assert!(result.is_err());
+            assert_eq!(mode.get(), 1);
+        }
+    }
+
+    #[test]
+    fn failed_host_switch_attempts_to_restore_onboard_mode() {
+        let mode = Cell::new(1);
+        let writes = Cell::new(0);
+        let result = set_superlight2_dpi(
+            1800,
+            || Ok(mode.get()),
+            |value| {
+                mode.set(value);
+                if value == 2 {
+                    anyhow::bail!("mode verification failed")
+                }
+                Ok(())
+            },
+            |_| {
+                writes.set(writes.get() + 1);
+                Ok(())
+            },
+            || Ok(1800),
+        );
+        assert!(result.is_err());
+        assert_eq!(mode.get(), 1);
+        assert_eq!(writes.get(), 0);
     }
 }
