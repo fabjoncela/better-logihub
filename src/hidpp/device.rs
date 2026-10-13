@@ -98,6 +98,38 @@ impl Device {
         Ok(dpi_from_be(response[1], response[2]))
     }
 
+    /// Read-only DPI protocol diagnostics. Does not send any DPI setter command.
+    pub fn dpi_diagnostics(&self, target_dpi: u16) -> Vec<String> {
+        let mut lines = vec![format!("Requested DPI: {target_dpi} (diagnostics only; no write)")];
+        for (id, label, getter) in [
+            (FEATURE_EXTENDED_ADJUSTABLE_DPI, "ExtendedAdjustableDPI", 5_u8),
+            (FEATURE_ADJUSTABLE_DPI, "AdjustableDPI", 2_u8),
+        ] {
+            match self.get_feature(id) {
+                Ok(Some(index)) => {
+                    lines.push(format!("Feature {label} (0x{id:04X}): available at index 0x{index:02X}"));
+                    match self.call(index, getter, &[0]) {
+                        Ok(bytes) => {
+                            let raw = bytes[..10].iter().map(|v| format!("{v:02X}")).collect::<Vec<_>>().join(" ");
+                            lines.push(format!("  fn {getter} sensor=0 response[0..10]: {raw}"));
+                            lines.push(format!("  X DPI from response[1..3]: {}", dpi_from_be(bytes[1], bytes[2])));
+                            if id == FEATURE_EXTENDED_ADJUSTABLE_DPI {
+                                let args = extended_dpi_write_params(target_dpi, &bytes);
+                                let payload = args.iter().map(|v| format!("{v:02X}")).collect::<Vec<_>>().join(" ");
+                                lines.push(format!("  candidate fn 6 payload (NOT SENT): {payload}"));
+                                lines.push(format!("  candidate existing Y bytes: {:02X} {:02X}; LOD byte: {:02X}", bytes[5], bytes[6], bytes[9]));
+                            }
+                        }
+                        Err(err) => lines.push(format!("  fn {getter} read failed: {err}")),
+                    }
+                }
+                Ok(None) => lines.push(format!("Feature {label} (0x{id:04X}): not advertised")),
+                Err(err) => lines.push(format!("Feature {label} lookup failed: {err}")),
+            }
+        }
+        lines
+    }
+
     pub fn set_dpi(&self, dpi: u16) -> Result<(), HidppError> {
         let [high, low] = dpi_to_be(dpi);
         if let Some(feature) = self.get_feature(FEATURE_EXTENDED_ADJUSTABLE_DPI)? {
