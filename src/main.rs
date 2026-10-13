@@ -405,6 +405,13 @@ impl From<ZoneSchemeArg> for ZoneScheme {
 
 #[derive(Debug, Subcommand)]
 enum DpiCommand {
+    /// Read-only DPI feature, current sensor response, and prospective write payload.
+    Diagnose {
+        #[arg(long)]
+        device: Option<usize>,
+        #[arg(long, default_value_t = 1800)]
+        target: u16,
+    },
     Get {
         #[arg(long)]
         device: Option<usize>,
@@ -903,6 +910,7 @@ fn main() -> Result<()> {
         Command::Dpi { command } => {
             let discovery = discover_with_warnings()?;
             match command {
+                DpiCommand::Diagnose { device, target } => dpi_diagnose(&discovery, device, target),
                 DpiCommand::Get { device } => dpi_get(&discovery, device, cli.json),
                 DpiCommand::Set { value, device } => dpi_set(&discovery, device, value, cli.json),
             }
@@ -1499,6 +1507,16 @@ fn battery(discovery: &Discovery, index: Option<usize>, json: bool) -> Result<()
         })
         .collect::<Vec<_>>();
     print_table(&["DEVICE", "NAME", "BATTERY", "STATUS", "ERROR"], &rows);
+    Ok(())
+}
+
+fn dpi_diagnose(discovery: &Discovery, index: Option<usize>, target_dpi: u16) -> Result<()> {
+    let target = single_device(discovery, index)?;
+    println!("DPI diagnostics: device {} ({})", target.index, target.name);
+    for line in target.device.dpi_diagnostics(target_dpi) {
+        println!("{line}");
+    }
+    println!("Read-only diagnosis finished. No setter or onboard-memory command sent.");
     Ok(())
 }
 
