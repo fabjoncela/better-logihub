@@ -349,6 +349,17 @@ impl<'a> Onboard<'a> {
         Description::parse_response(&response)
     }
 
+    pub fn profile_format_id(&self) -> Result<u8> {
+        let response = self
+            .device
+            .call_short(self.feature, 0, &[])
+            .map_err(anyhow::Error::new)?;
+        response
+            .get(1)
+            .copied()
+            .context("getDescription returned no profile format")
+    }
+
     pub fn mode(&self) -> Result<u8> {
         let response = self
             .device

@@ -442,6 +442,7 @@ fn is_receiver_pid(product_id: u16) -> bool {
             | 0xC545
             | 0xC547
             | 0xC548
+            | 0xC54D // LIGHTSPEED receiver used by PRO X SUPERLIGHT 2
     )
 }
 
@@ -465,6 +466,13 @@ mod tests {
             normalize_physical_path(first).unwrap(),
             r"\\?\hid#vid_046d&pid_c52b&mi_02#8&2c10688f&0#{4d1e55b2-f16f-11cf-88cb-001111000030}"
         );
+    }
+
+    #[test]
+    fn recognizes_superlight_2_c54d_as_receiver() {
+        assert!(is_receiver_pid(0xC54D));
+        assert!(is_receiver_pid(0xC548)); // keep upstream receiver support
+        assert!(!is_receiver_pid(0xC09B)); // actual mouse is not a receiver
     }
 
     #[test]

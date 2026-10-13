@@ -483,9 +483,9 @@ fn hidpp20_error_name(code: u8) -> &'static str {
         2 => "invalid argument",
         3 => "out of range",
         4 => "hardware error",
-        5 => "invalid argument",
-        6 => "out of range",
-        7 => "unsupported",
+        5 => "Logitech internal error",
+        6 => "invalid feature index",
+        7 => "invalid function ID",
         8 => "busy",
         9 => "unsupported",
         _ => "unknown",
@@ -533,6 +533,13 @@ mod tests {
         let response = Packet::new(&bytes).unwrap();
         let error = classify_response(&request, &response).unwrap_err();
         assert!(matches!(error, HidppError::Hidpp20 { code: 6, .. }));
+    }
+
+    #[test]
+    fn names_hidpp20_internal_error_and_invalid_indices() {
+        assert_eq!(hidpp20_error_name(5), "Logitech internal error");
+        assert_eq!(hidpp20_error_name(6), "invalid feature index");
+        assert_eq!(hidpp20_error_name(7), "invalid function ID");
     }
 
     #[test]
