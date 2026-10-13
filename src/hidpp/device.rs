@@ -105,7 +105,7 @@ impl Device {
             // Preserve independent Y and lift-off distance from fn 5.
             // If Y is linked (zero), leave it linked instead of forcing X onto Y.
             let current = self.call(feature, 5, &[0])?;
-            let args = [0, high, low, current[5], current[6], current[9]];
+            let args = extended_dpi_write_params(dpi, &current);
             self.call(feature, 6, &args)?;
             return Ok(());
         }
@@ -363,9 +363,29 @@ pub fn feature_name(id: u16) -> &'static str {
     }
 }
 
+// Extended DPI fn 5 result: sensor, X, default-X, Y, default-Y, LOD.
+// Fn 6 writes sensor, new-X, existing-Y, existing-LOD.
+fn extended_dpi_write_params(dpi: u16, current: &[u8; 16]) -> [u8; 6] {
+    let [high, low] = dpi.to_be_bytes();
+    [0, high, low, current[5], current[6], current[9]]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_dpi_frame_keeps_linked_y_and_lod() {
+        let mut current = [0_u8; 16];
+        current[1] = 0x03; current[2] = 0x20; // current 800 DPI
+        current[5] = 0; current[6] = 0;       // Y linked to X
+        current[9] = 2;                       // medium LOD
+        assert_eq!(extended_dpi_write_params(1800, &current),
+                   [0, 0x07, 0x08, 0, 0, 2]);
+        current[5] = 0x06; current[6] = 0x40; // independent 1600 Y DPI
+        assert_eq!(extended_dpi_write_params(800, &current),
+                   [0, 0x03, 0x20, 0x06, 0x40, 2]);
+    }
 
     #[test]
     fn converts_extended_report_rates() {
