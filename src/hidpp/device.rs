@@ -134,8 +134,8 @@ impl Device {
         let [high, low] = dpi_to_be(dpi);
         if let Some(feature) = self.get_feature(FEATURE_EXTENDED_ADJUSTABLE_DPI)? {
             // 0x2202 fn 6 requires sensor, X DPI, Y DPI, and LOD.
-            // Preserve independent Y and lift-off distance from fn 5.
-            // If Y is linked (zero), leave it linked instead of forcing X onto Y.
+            // Preserve lift-off distance; set supported X/Y axes to the same requested DPI.
+            // Only emit Y=0 for sensors that report Y=0 (unsupported independent axis).
             let current = self.call(feature, 5, &[0])?;
             let args = extended_dpi_write_params(dpi, &current);
             self.call(feature, 6, &args)?;
@@ -396,10 +396,17 @@ pub fn feature_name(id: u16) -> &'static str {
 }
 
 // Extended DPI fn 5 result: sensor, X, default-X, Y, default-Y, LOD.
-// Fn 6 writes sensor, new-X, existing-Y, existing-LOD.
+// Fn 6 writes sensor, new-X, new-Y (if supported), existing-LOD.
 fn extended_dpi_write_params(dpi: u16, current: &[u8; 16]) -> [u8; 6] {
     let [high, low] = dpi.to_be_bytes();
-    [0, high, low, current[5], current[6], current[9]]
+    // Sensor advertises a concrete Y-axis DPI: keep both axes synchronized.
+    // Only use Y=0 when the sensor reports that the Y axis is unsupported.
+    let (y_hi, y_lo) = if current[5] == 0 && current[6] == 0 {
+        (0, 0)
+    } else {
+        (high, low)
+    };
+    [0, high, low, y_hi, y_lo, current[9]]
 }
 
 #[cfg(test)]
@@ -416,7 +423,7 @@ mod tests {
                    [0, 0x07, 0x08, 0, 0, 2]);
         current[5] = 0x06; current[6] = 0x40; // independent 1600 Y DPI
         assert_eq!(extended_dpi_write_params(800, &current),
-                   [0, 0x03, 0x20, 0x06, 0x40, 2]);
+                   [0, 0x03, 0x20, 0x03, 0x20, 2]);
     }
 
     #[test]
